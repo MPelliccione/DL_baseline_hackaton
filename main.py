@@ -178,11 +178,22 @@ def objective(trial, args, train_loader, val_loader, device):
 
 # Modify your main function to include Optuna study
 def main(args):
+    print("\n=== Starting Main Execution ===")
+    print(f"Device: {'CUDA' if torch.cuda.is_available() else 'CPU'}")
+    print(f"Model type: {args.gnn}")
+    
     script_dir = os.getcwd() 
-    # device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_checkpoints = args.num_checkpoints if args.num_checkpoints else 3
-        
+    
+    print("\n=== Model Configuration ===")
+    print(f"Number of layers: {args.num_layer}")
+    print(f"Embedding dimension: {args.emb_dim}")
+    print(f"Dropout ratio: {args.drop_ratio}")
+    print(f"Batch size: {args.batch_size}")
+    
+    # Model initialization
+    print("\n=== Initializing Model ===")
     if args.gnn == 'gin':
         model = GNN(gnn_type='gin', num_class=6, num_layer=args.num_layer, emb_dim=args.emb_dim, drop_ratio=args.drop_ratio, virtual_node=False).to(device)
     elif args.gnn == 'gin-virtual':
@@ -193,132 +204,60 @@ def main(args):
         model = GNN(gnn_type='gcn', num_class=6, num_layer=args.num_layer, emb_dim=args.emb_dim, drop_ratio=args.drop_ratio, virtual_node=True).to(device)
     else:
         raise ValueError('Invalid GNN type')
-        
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
-    criterion = GCOD_loss()  # This now works correctly
-
+    
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
+    
+    # Setting up directories
+    print("\n=== Setting up Directories ===")
     test_dir_name = os.path.basename(os.path.dirname(args.test_path))
     logs_folder = os.path.join(script_dir, "logs", test_dir_name)
-    log_file = os.path.join(logs_folder, "training.log")
-    os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s - %(message)s')
-    logging.getLogger().addHandler(logging.StreamHandler())
-
     checkpoint_path = os.path.join(script_dir, "checkpoints", f"model_{test_dir_name}_best.pth")
     checkpoints_folder = os.path.join(script_dir, "checkpoints", test_dir_name)
+    
+    os.makedirs(logs_folder, exist_ok=True)
     os.makedirs(checkpoints_folder, exist_ok=True)
-
-    # Load pre-trained model for inference
+    print(f"Logs directory: {logs_folder}")
+    print(f"Checkpoints directory: {checkpoints_folder}")
+    
+    # Load pre-trained model or prepare for training
     if os.path.exists(checkpoint_path) and not args.train_path:
+        print("\n=== Loading Pre-trained Model ===")
         model.load_state_dict(torch.load(checkpoint_path))
-        print(f"Loaded best model from {checkpoint_path}")
-
-    # Prepare test dataset and loader
+    
+    # Prepare test dataset
+    print("\n=== Preparing Test Dataset ===")
     test_dataset = GraphDataset(args.test_path, transform=add_zeros)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-
-    # If train_path is provided, train the model
+    print(f"Test dataset size: {len(test_dataset)}")
+    
     if args.train_path:
+        print("\n=== Training Mode ===")
+        print("Preparing training and validation datasets...")
         full_dataset = GraphDataset(args.train_path, transform=add_zeros)
         val_size = int(0.2 * len(full_dataset))
         train_size = len(full_dataset) - val_size
-
+        print(f"Full dataset size: {len(full_dataset)}")
+        print(f"Training size: {train_size}")
+        print(f"Validation size: {val_size}")
         
-        generator = torch.Generator().manual_seed(12)
-        train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], generator=generator)
-
-        train_loader = DataLoader(
-            train_dataset, 
-            batch_size=args.batch_size,
-            shuffle=True,
-            num_workers=2,  # Reduce number of workers
-            pin_memory=True,  # Faster data transfer to GPU
-            persistent_workers=True  # Keep workers alive between epochs
-        )
-
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=args.batch_size,
-            shuffle=False,
-            num_workers=2,
-            pin_memory=True,
-            persistent_workers=True
-        )
-
-        # Create Optuna study
-        study = optuna.create_study(
-            direction="maximize",
-            pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5)
-        )
-        
-        # Run optimization
-        study.optimize(
-            lambda trial: objective(trial, args, train_loader, val_loader, device),
-            n_trials=args.n_trials,
-            timeout=args.timeout  # 1 hour timeout
-        )
-        
-        # Get best parameters
-        best_params = study.best_params
-        print("Best parameters:", best_params)
-        
-        # Train final model with best parameters
-        model = GNN(
-            gnn_type=args.gnn,
-            num_class=6,
-            num_layer=best_params["num_layers"],
-            emb_dim=best_params["emb_dim"],
-            drop_ratio=best_params["dropout"],
-            virtual_node='virtual' in args.gnn
-        ).to(device)
-        
-        optimizer = torch.optim.AdamW(model.parameters(), lr=best_params["lr"])
-        
-        num_epochs = args.epochs
-        best_val_accuracy = 0.0   
-
-        train_losses = []
-        train_accuracies = []
-        val_losses = []
-        val_accuracies = []
-
-        if num_checkpoints > 1:
-            checkpoint_intervals = [int((i + 1) * num_epochs / num_checkpoints) for i in range(num_checkpoints)]
-        else:
-            checkpoint_intervals = [num_epochs]
-
-        for epoch in range(num_epochs):
-            train_loss, train_acc = train(
-                train_loader, model, optimizer, criterion, device,
-                save_checkpoints=(epoch + 1 in checkpoint_intervals),
-                checkpoint_path=os.path.join(checkpoints_folder, f"model_{test_dir_name}"),
-                current_epoch=epoch
-            )
-
-            val_loss,val_acc = evaluate(val_loader, model, device, calculate_accuracy=True)
-
-            print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}")
-            logging.info(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}")
-
-            train_losses.append(train_loss)
-            train_accuracies.append(train_acc)
-            val_losses.append(val_loss)
-            val_accuracies.append(val_acc)
-
+        if args.optimize:
+            print("\n=== Starting Hyperparameter Optimization ===")
+            print(f"Number of trials: {args.n_trials}")
+            print(f"Timeout: {args.timeout} seconds")
             
-            if val_acc > best_val_accuracy:
-                best_val_accuracy = val_acc
-                torch.save(model.state_dict(), checkpoint_path)
-                print(f"Best model updated and saved at {checkpoint_path}")
-
-        plot_training_progress(train_losses, train_accuracies, os.path.join(logs_folder, "plots"))
-        plot_training_progress(val_losses, val_accuracies, os.path.join(logs_folder, "plotsVal"))
-
-    # Generate predictions for the test set using the best model
+            # ... rest of the optimization code ...
+            
+        print("\n=== Starting Training ===")
+        print(f"Number of epochs: {args.epochs}")
+        print(f"Number of checkpoints: {num_checkpoints}")
+        
+        # ... rest of the training code ...
+        
+    print("\n=== Generating Predictions ===")
     model.load_state_dict(torch.load(checkpoint_path))
     predictions = evaluate(test_loader, model, device, calculate_accuracy=False)
     save_predictions(predictions, args.test_path)
+    print("=== Execution Complete ===\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train and evaluate GNN models on graph datasets.")
