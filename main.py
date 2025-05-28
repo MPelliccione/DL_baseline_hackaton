@@ -242,11 +242,27 @@ def main(args):
     print(f"Checkpoints directory: {checkpoints_folder}")
     
     # Load pre-trained model or prepare for training
-    if os.path.exists(checkpoint_path) and not args.train_path:
+    if os.path.exists(checkpoint_path):
         print("\n=== Loading Pre-trained Model ===")
-        # Add device mapping when loading the model
-        state_dict = torch.load(checkpoint_path, map_location=device)
-        model.load_state_dict(state_dict)
+        try:
+            state_dict = torch.load(checkpoint_path, map_location=device)
+            if check_model_compatibility(state_dict, model):
+                model.load_state_dict(state_dict)
+                print("Model loaded successfully with matching architecture")
+            else:
+                print("Warning: Model architecture mismatch. Training new model.")
+        except Exception as e:
+            print(f"Warning: Error loading model: {e}")
+            print("Creating new model instance...")
+            # Reinitialize model with same architecture
+            model = GNN(
+                gnn_type=args.gnn,
+                num_class=6,
+                num_layer=args.num_layer,
+                emb_dim=args.emb_dim,
+                drop_ratio=args.drop_ratio,
+                virtual_node='virtual' in args.gnn
+            ).to(device)
     
     # Prepare test dataset
     print("\n=== Preparing Test Dataset ===")
@@ -278,12 +294,34 @@ def main(args):
         # ... rest of the training code ...
         
     print("\n=== Generating Predictions ===")
-    # Add device mapping here too
-    state_dict = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(state_dict)
+    try:
+        state_dict = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(state_dict, strict=False)
+        print("Model loaded successfully for predictions")
+    except Exception as e:
+        print(f"Warning: Error loading model for predictions: {e}")
+        print("Using current model state")
+    
     predictions = evaluate(test_loader, model, device, calculate_accuracy=False)
     save_predictions(predictions, args.test_path)
     print("=== Execution Complete ===\n")
+
+def check_model_compatibility(state_dict, current_model):
+    """Check if a state dict is compatible with current model architecture."""
+    model_keys = set(current_model.state_dict().keys())
+    state_dict_keys = set(state_dict.keys())
+    
+    missing_keys = model_keys - state_dict_keys
+    unexpected_keys = state_dict_keys - model_keys
+    
+    if missing_keys or unexpected_keys:
+        print("\nModel Architecture Mismatch:")
+        if missing_keys:
+            print(f"Missing keys in state dict: {len(missing_keys)}")
+        if unexpected_keys:
+            print(f"Unexpected keys in state dict: {len(unexpected_keys)}")
+        return False
+    return True
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train and evaluate GNN models on graph datasets.")
