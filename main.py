@@ -8,7 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import logging
 from tqdm import tqdm
-
+from src.losses import GCOD_loss
 from src.models import GNN 
 
 # Set the random seed
@@ -24,8 +24,9 @@ def train(data_loader, model, optimizer, criterion, device, save_checkpoints, ch
     for data in tqdm(data_loader, desc="Iterating training graphs", unit="batch"):
         data = data.to(device)
         optimizer.zero_grad()
-        output = model(data)
-        loss = criterion(output, data.y)
+        output, embeddings = model(data, return_embeddings=True)  # Modify model to return embeddings
+        # Use GCOD loss instead of standard CrossEntropyLoss
+        loss = GCOD_loss(output, data.y, embeddings)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
@@ -46,7 +47,8 @@ def evaluate(data_loader, model, device, calculate_accuracy=False):
     with torch.no_grad():
         for data in tqdm(data_loader, desc="Iterating eval graphs", unit="batch"):
             data = data.to(device)
-            output = model(data)
+            # Solo l'output ci interessa durante la valutazione
+            output = model(data, return_embeddings=False)
             pred = output.argmax(dim=1)
             predictions.extend(pred.cpu().numpy())
             if calculate_accuracy:
@@ -119,7 +121,7 @@ def main(args):
     else:
         raise ValueError('Invalid GNN type')
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = GCOD_loss()
 
     # Identify dataset folder (A, B, C, or D)
     test_dir_name = os.path.basename(os.path.dirname(args.test_path))
