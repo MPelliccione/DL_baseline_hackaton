@@ -19,7 +19,16 @@ def add_zeros(data):
     data.x = torch.zeros(data.num_nodes, dtype=torch.long)
     return data
 
-
+def get_data_loader(dataset, batch_size, shuffle=True):
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=2,  # Reduce number of workers
+        pin_memory=True,  # More efficient GPU transfer
+        persistent_workers=True,  # Keep workers alive between epochs
+        prefetch_factor=2  # Reduce prefetching
+    )
 
 def train(data_loader, model, optimizer, criterion, device, save_checkpoints, checkpoint_path, current_epoch):
     model.train()
