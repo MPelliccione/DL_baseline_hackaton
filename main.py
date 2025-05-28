@@ -26,6 +26,7 @@ def train(data_loader, model, optimizer, criterion, device, save_checkpoints, ch
     total_loss = 0
     correct = 0
     total = 0
+    # Clear memory after each batch
     for data in tqdm(data_loader, desc="Iterating training graphs", unit="batch"):
         data = data.to(device)
         optimizer.zero_grad()
@@ -33,10 +34,16 @@ def train(data_loader, model, optimizer, criterion, device, save_checkpoints, ch
         loss = criterion(output, data.y)
         loss.backward()
         optimizer.step()
-        total_loss += loss.item()
-        pred = output.argmax(dim=1)
-        correct += (pred == data.y).sum().item()
+        
+        # Move predictions to CPU and convert to numpy immediately
+        pred = output.argmax(dim=1).cpu()
+        correct += (pred == data.y.cpu()).sum().item()
         total += data.y.size(0)
+        total_loss += loss.item()
+        
+        # Clear memory
+        del data, output, loss, pred
+        torch.cuda.empty_cache()
 
     # Save checkpoints if required
     if save_checkpoints:
@@ -116,13 +123,13 @@ def plot_training_progress(train_losses, train_accuracies, output_dir):
     plt.close()
 
 def objective(trial, args, train_loader, val_loader, device):
-    # Hyperparameters to optimize
-    lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
-    dropout = trial.suggest_float("dropout", 0.1, 0.7)
-    num_layers = trial.suggest_int("num_layers", 2, 7)
-    emb_dim = trial.suggest_categorical("emb_dim", [64, 128, 256, 300])
+    # Reduce parameter search space
+    lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)  # Narrower range
+    dropout = trial.suggest_float("dropout", 0.2, 0.5)     # Narrower range
+    num_layers = trial.suggest_int("num_layers", 2, 6)     # Fewer layers
+    emb_dim = trial.suggest_categorical("emb_dim", [64, 128, 256])  # Smaller dimensions
     
-    # Create model with trial parameters
+    # Create model with smaller capacity
     model = GNN(
         gnn_type=args.gnn,
         num_class=6,
@@ -131,6 +138,9 @@ def objective(trial, args, train_loader, val_loader, device):
         drop_ratio=dropout,
         virtual_node='virtual' in args.gnn
     ).to(device)
+    
+    # Clear memory before training
+    torch.cuda.empty_cache()
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     criterion = GCOD_loss()
@@ -218,8 +228,23 @@ def main(args):
         generator = torch.Generator().manual_seed(12)
         train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], generator=generator)
 
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=2,  # Reduce number of workers
+            pin_memory=True,  # Faster data transfer to GPU
+            persistent_workers=True  # Keep workers alive between epochs
+        )
+
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=2,
+            pin_memory=True,
+            persistent_workers=True
+        )
 
         # Create Optuna study
         study = optuna.create_study(
