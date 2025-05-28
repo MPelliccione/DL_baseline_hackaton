@@ -192,7 +192,20 @@ def main(args):
     print(f"Model type: {args.gnn}")
     
     script_dir = os.getcwd() 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Device setup with proper error handling
+    if torch.cuda.is_available():
+        n_cuda_devices = torch.cuda.device_count()
+        if args.device >= n_cuda_devices:
+            print(f"Warning: Selected GPU {args.device} not available. Using GPU 0 instead.")
+            device = torch.device("cuda:0")
+        else:
+            device = torch.device(f"cuda:{args.device}")
+    else:
+        print("Warning: No GPU available. Using CPU instead.")
+        device = torch.device("cpu")
+    
+    print(f"Device: {device}")
     num_checkpoints = args.num_checkpoints if args.num_checkpoints else 3
     
     print("\n=== Model Configuration ===")
@@ -231,7 +244,9 @@ def main(args):
     # Load pre-trained model or prepare for training
     if os.path.exists(checkpoint_path) and not args.train_path:
         print("\n=== Loading Pre-trained Model ===")
-        model.load_state_dict(torch.load(checkpoint_path))
+        # Add device mapping when loading the model
+        state_dict = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(state_dict)
     
     # Prepare test dataset
     print("\n=== Preparing Test Dataset ===")
@@ -263,7 +278,9 @@ def main(args):
         # ... rest of the training code ...
         
     print("\n=== Generating Predictions ===")
-    model.load_state_dict(torch.load(checkpoint_path))
+    # Add device mapping here too
+    state_dict = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(state_dict)
     predictions = evaluate(test_loader, model, device, calculate_accuracy=False)
     save_predictions(predictions, args.test_path)
     print("=== Execution Complete ===\n")
