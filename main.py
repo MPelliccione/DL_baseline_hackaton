@@ -16,6 +16,7 @@ import optuna
 set_seed()
 
 def add_zeros(data):
+    # Create tensor on CPU initially
     data.x = torch.zeros(data.num_nodes, dtype=torch.long)
     return data
 
@@ -71,9 +72,15 @@ def evaluate(data_loader, model, device, calculate_accuracy=False):
     predictions = []
     total_loss = 0
     criterion = GCOD_loss()
+    
     with torch.no_grad():
         for data in tqdm(data_loader, desc="Iterating eval graphs", unit="batch"):
+            # Move all data attributes to the correct device
             data = data.to(device)
+            # Ensure x is on the same device as model
+            if hasattr(data, 'x'):
+                data.x = data.x.to(device)
+            
             output = model(data)
             pred = output.argmax(dim=1)
             
@@ -83,9 +90,13 @@ def evaluate(data_loader, model, device, calculate_accuracy=False):
                 total_loss += criterion(output, data.y).item()
             else:
                 predictions.extend(pred.cpu().numpy())
+            
+            # Clear memory after each batch
+            torch.cuda.empty_cache()
+            
     if calculate_accuracy:
         accuracy = correct / total
-        return  total_loss / len(data_loader),accuracy
+        return total_loss / len(data_loader), accuracy
     return predictions
 
 def save_predictions(predictions, test_path):
@@ -306,14 +317,18 @@ def main(args):
     print("\n=== Generating Predictions ===")
     try:
         state_dict = torch.load(checkpoint_path, map_location=device)
-        # Ensure model has all required attributes before loading weights
+        # Ensure model and its attributes are on the correct device
+        model = model.to(device)
         model = ensure_model_attributes(model)
+        if hasattr(model, 'node_encoder'):
+            model.node_encoder = model.node_encoder.to(device)
         model.load_state_dict(state_dict, strict=False)
         print("Model loaded successfully for predictions")
     except Exception as e:
         print(f"Warning: Error loading model for predictions: {e}")
         print("Using current model state")
         model = ensure_model_attributes(model)
+        model = model.to(device)
     
     predictions = evaluate(test_loader, model, device, calculate_accuracy=False)
     save_predictions(predictions, args.test_path)
