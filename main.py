@@ -10,6 +10,7 @@ import logging
 from tqdm import tqdm
 from src.losses import GCOD_loss
 from src.models import GNN 
+import optuna
 
 # Set the random seed
 set_seed()
@@ -53,7 +54,7 @@ def evaluate(data_loader, model, device, calculate_accuracy=False):
     total = 0
     predictions = []
     total_loss = 0
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = GCOD_loss()
     with torch.no_grad():
         for data in tqdm(data_loader, desc="Iterating eval graphs", unit="batch"):
             data = data.to(device)
@@ -114,6 +115,58 @@ def plot_training_progress(train_losses, train_accuracies, output_dir):
     plt.savefig(os.path.join(output_dir, "training_progress.png"))
     plt.close()
 
+def objective(trial, args, train_loader, val_loader, device):
+    # Hyperparameters to optimize
+    lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
+    dropout = trial.suggest_float("dropout", 0.1, 0.7)
+    num_layers = trial.suggest_int("num_layers", 2, 7)
+    emb_dim = trial.suggest_categorical("emb_dim", [64, 128, 256, 300])
+    
+    # Create model with trial parameters
+    model = GNN(
+        gnn_type=args.gnn,
+        num_class=6,
+        num_layer=num_layers,
+        emb_dim=emb_dim,
+        drop_ratio=dropout,
+        virtual_node='virtual' in args.gnn
+    ).to(device)
+    
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    criterion = GCOD_loss()
+    
+    # Training loop
+    best_val_acc = 0
+    patience = 5
+    patience_counter = 0
+    
+    for epoch in range(args.epochs):
+        train_loss, train_acc = train(
+            train_loader, model, optimizer, criterion, device,
+            save_checkpoints=False, checkpoint_path=None, current_epoch=epoch
+        )
+        
+        val_loss, val_acc = evaluate(val_loader, model, device, calculate_accuracy=True)
+        
+        # Report intermediate value
+        trial.report(val_acc, epoch)
+        
+        # Handle pruning based on the intermediate value
+        if trial.should_prune():
+            raise optuna.exceptions.TrialPruned()
+            
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            
+        if patience_counter >= patience:
+            break
+            
+    return best_val_acc
+
+# Modify your main function to include Optuna study
 def main(args):
     script_dir = os.getcwd() 
     # device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
@@ -132,7 +185,7 @@ def main(args):
         raise ValueError('Invalid GNN type')
         
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
     criterion = GCOD_loss()  # This now works correctly
 
     test_dir_name = os.path.basename(os.path.dirname(args.test_path))
@@ -168,6 +221,35 @@ def main(args):
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
+        # Create Optuna study
+        study = optuna.create_study(
+            direction="maximize",
+            pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5)
+        )
+        
+        # Run optimization
+        study.optimize(
+            lambda trial: objective(trial, args, train_loader, val_loader, device),
+            n_trials=args.n_trials,
+            timeout=args.timeout  # 1 hour timeout
+        )
+        
+        # Get best parameters
+        best_params = study.best_params
+        print("Best parameters:", best_params)
+        
+        # Train final model with best parameters
+        model = GNN(
+            gnn_type=args.gnn,
+            num_class=6,
+            num_layer=best_params["num_layers"],
+            emb_dim=best_params["emb_dim"],
+            drop_ratio=best_params["dropout"],
+            virtual_node='virtual' in args.gnn
+        ).to(device)
+        
+        optimizer = torch.optim.AdamW(model.parameters(), lr=best_params["lr"])
+        
         num_epochs = args.epochs
         best_val_accuracy = 0.0   
 
@@ -225,6 +307,9 @@ if __name__ == "__main__":
     parser.add_argument('--emb_dim', type=int, default=300, help='dimensionality of hidden units in GNNs (default: 300)')
     parser.add_argument('--batch_size', type=int, default=32, help='input batch size for training (default: 32)')
     parser.add_argument('--epochs', type=int, default=10, help='number of epochs to train (default: 10)')
+    parser.add_argument('--optimize', action='store_true', help='Use Optuna for hyperparameter optimization')
+    parser.add_argument('--n_trials', type=int, default=50, help='Number of Optuna trials')
+    parser.add_argument('--timeout', type=int, default=3600, help='Timeout for optimization in seconds')
     
     args = parser.parse_args()
     main(args)
