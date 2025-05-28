@@ -202,6 +202,56 @@ def ensure_model_attributes(model):
     if not hasattr(model, 'node_encoder'):
         print("Initializing missing node_encoder")
         model.node_encoder = torch.nn.Embedding(1, model.emb_dim)
+    
+    if not hasattr(model, 'convs'):
+        print("Initializing missing convs")
+        from torch_geometric.nn import GINConv, GCNConv
+        model.convs = torch.nn.ModuleList()
+        for layer in range(model.num_layer):
+            if model.gnn_type == 'gin':
+                mlp = torch.nn.Sequential(
+                    torch.nn.Linear(model.emb_dim, 2*model.emb_dim),
+                    torch.nn.BatchNorm1d(2*model.emb_dim),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(2*model.emb_dim, model.emb_dim)
+                )
+                conv = GINConv(mlp)
+            else:
+                conv = GCNConv(model.emb_dim, model.emb_dim)
+            model.convs.append(conv)
+    
+    if not hasattr(model, 'batch_norms'):
+        print("Initializing missing batch_norms")
+        model.batch_norms = torch.nn.ModuleList([
+            torch.nn.BatchNorm1d(model.emb_dim) 
+            for _ in range(model.num_layer)
+        ])
+    
+    if model.virtual_node and not hasattr(model, 'virtualnode_embedding'):
+        print("Initializing missing virtualnode_embedding")
+        model.virtualnode_embedding = torch.nn.Embedding(1, model.emb_dim)
+        
+    if model.virtual_node and not hasattr(model, 'mlp_virtualnode_list'):
+        print("Initializing missing mlp_virtualnode_list")
+        model.mlp_virtualnode_list = torch.nn.ModuleList([
+            torch.nn.Sequential(
+                torch.nn.Linear(model.emb_dim, 2*model.emb_dim),
+                torch.nn.BatchNorm1d(2*model.emb_dim),
+                torch.nn.ReLU(),
+                torch.nn.Linear(2*model.emb_dim, model.emb_dim),
+                torch.nn.BatchNorm1d(model.emb_dim),
+                torch.nn.ReLU()
+            ) for _ in range(model.num_layer-1)
+        ])
+    
+    # Move all components to the same device as the model
+    device = next(model.parameters()).device
+    model = model.to(device)
+    for attr in ['node_encoder', 'convs', 'batch_norms', 
+                'virtualnode_embedding', 'mlp_virtualnode_list']:
+        if hasattr(model, attr):
+            setattr(model, attr, getattr(model, attr).to(device))
+    
     return model
 
 # Modify your main function to include Optuna study
@@ -317,19 +367,17 @@ def main(args):
     print("\n=== Generating Predictions ===")
     try:
         state_dict = torch.load(checkpoint_path, map_location=device)
-        # Ensure model and its attributes are on the correct device
-        model = model.to(device)
+        # Initialize all required attributes before loading state dict
         model = ensure_model_attributes(model)
-        if hasattr(model, 'node_encoder'):
-            model.node_encoder = model.node_encoder.to(device)
         model.load_state_dict(state_dict, strict=False)
         print("Model loaded successfully for predictions")
     except Exception as e:
         print(f"Warning: Error loading model for predictions: {e}")
         print("Using current model state")
         model = ensure_model_attributes(model)
-        model = model.to(device)
     
+    # Ensure model is in eval mode
+    model.eval()
     predictions = evaluate(test_loader, model, device, calculate_accuracy=False)
     save_predictions(predictions, args.test_path)
     print("=== Execution Complete ===\n")
