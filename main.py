@@ -18,18 +18,24 @@ def add_zeros(data):
     data.x = torch.zeros(data.num_nodes, dtype=torch.long)
     return data
 
+
+
 def train(data_loader, model, optimizer, criterion, device, save_checkpoints, checkpoint_path, current_epoch):
     model.train()
     total_loss = 0
+    correct = 0
+    total = 0
     for data in tqdm(data_loader, desc="Iterating training graphs", unit="batch"):
         data = data.to(device)
         optimizer.zero_grad()
-        output, embeddings = model(data, return_embeddings=True)  # Modify model to return embeddings
-        # Use GCOD loss instead of standard CrossEntropyLoss
-        loss = GCOD_loss(output, data.y, embeddings)
+        output = model(data)
+        loss = criterion(output, data.y)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
+        pred = output.argmax(dim=1)
+        correct += (pred == data.y).sum().item()
+        total += data.y.size(0)
 
     # Save checkpoints if required
     if save_checkpoints:
@@ -37,30 +43,36 @@ def train(data_loader, model, optimizer, criterion, device, save_checkpoints, ch
         torch.save(model.state_dict(), checkpoint_file)
         print(f"Checkpoint saved at {checkpoint_file}")
 
-    return total_loss / len(data_loader)
+    return total_loss / len(data_loader),  correct / total
+
+
 
 def evaluate(data_loader, model, device, calculate_accuracy=False):
     model.eval()
     correct = 0
     total = 0
     predictions = []
+    total_loss = 0
+    criterion = torch.nn.CrossEntropyLoss()
     with torch.no_grad():
         for data in tqdm(data_loader, desc="Iterating eval graphs", unit="batch"):
             data = data.to(device)
-            # Solo l'output ci interessa durante la valutazione
-            output = model(data, return_embeddings=False)
+            output = model(data)
             pred = output.argmax(dim=1)
-            predictions.extend(pred.cpu().numpy())
+            
             if calculate_accuracy:
                 correct += (pred == data.y).sum().item()
                 total += data.y.size(0)
+                total_loss += criterion(output, data.y).item()
+            else:
+                predictions.extend(pred.cpu().numpy())
     if calculate_accuracy:
         accuracy = correct / total
-        return accuracy, predictions
+        return  total_loss / len(data_loader),accuracy
     return predictions
 
 def save_predictions(predictions, test_path):
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir = os.getcwd() 
     submission_folder = os.path.join(script_dir, "submission")
     test_dir_name = os.path.basename(os.path.dirname(test_path))
     
@@ -103,38 +115,33 @@ def plot_training_progress(train_losses, train_accuracies, output_dir):
     plt.close()
 
 def main(args):
-    # Get the directory where the main script is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    device = torch.device("cuda:" + str(args.device)) if torch.cuda.is_available() else torch.device("cpu")
+    script_dir = os.getcwd() 
+    # device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_checkpoints = args.num_checkpoints if args.num_checkpoints else 3
-    
-    
-
+        
     if args.gnn == 'gin':
-        model = GNN(gnn_type = 'gin', num_class = 6, num_layer = args.num_layer, emb_dim = args.emb_dim, drop_ratio = args.drop_ratio, virtual_node = False).to(device)
+        model = GNN(gnn_type='gin', num_class=6, num_layer=args.num_layer, emb_dim=args.emb_dim, drop_ratio=args.drop_ratio, virtual_node=False).to(device)
     elif args.gnn == 'gin-virtual':
-        model = GNN(gnn_type = 'gin', num_class = 6, num_layer = args.num_layer, emb_dim = args.emb_dim, drop_ratio = args.drop_ratio, virtual_node = True).to(device)
+        model = GNN(gnn_type='gin', num_class=6, num_layer=args.num_layer, emb_dim=args.emb_dim, drop_ratio=args.drop_ratio, virtual_node=True).to(device)
     elif args.gnn == 'gcn':
-        model = GNN(gnn_type = 'gcn', num_class = 6, num_layer = args.num_layer, emb_dim = args.emb_dim, drop_ratio = args.drop_ratio, virtual_node = False).to(device)
+        model = GNN(gnn_type='gcn', num_class=6, num_layer=args.num_layer, emb_dim=args.emb_dim, drop_ratio=args.drop_ratio, virtual_node=False).to(device)
     elif args.gnn == 'gcn-virtual':
-        model = GNN(gnn_type = 'gcn', num_class = 6, num_layer = args.num_layer, emb_dim = args.emb_dim, drop_ratio = args.drop_ratio, virtual_node = True).to(device)
+        model = GNN(gnn_type='gcn', num_class=6, num_layer=args.num_layer, emb_dim=args.emb_dim, drop_ratio=args.drop_ratio, virtual_node=True).to(device)
     else:
         raise ValueError('Invalid GNN type')
+        
+
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     criterion = GCOD_loss()  # This now works correctly
 
-    # Identify dataset folder (A, B, C, or D)
     test_dir_name = os.path.basename(os.path.dirname(args.test_path))
-    
-    # Setup logging
     logs_folder = os.path.join(script_dir, "logs", test_dir_name)
     log_file = os.path.join(logs_folder, "training.log")
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
     logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s - %(message)s')
-    logging.getLogger().addHandler(logging.StreamHandler())  # Console output as well
+    logging.getLogger().addHandler(logging.StreamHandler())
 
-
-    # Define checkpoint path relative to the script's directory
     checkpoint_path = os.path.join(script_dir, "checkpoints", f"model_{test_dir_name}_best.pth")
     checkpoints_folder = os.path.join(script_dir, "checkpoints", test_dir_name)
     os.makedirs(checkpoints_folder, exist_ok=True)
@@ -150,44 +157,56 @@ def main(args):
 
     # If train_path is provided, train the model
     if args.train_path:
-        train_dataset = GraphDataset(args.train_path, transform=add_zeros)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        full_dataset = GraphDataset(args.train_path, transform=add_zeros)
+        val_size = int(0.2 * len(full_dataset))
+        train_size = len(full_dataset) - val_size
 
-        # Training loop
+        
+        generator = torch.Generator().manual_seed(12)
+        train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], generator=generator)
+
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+
         num_epochs = args.epochs
-        best_accuracy = 0.0
+        best_val_accuracy = 0.0   
+
         train_losses = []
         train_accuracies = []
+        val_losses = []
+        val_accuracies = []
 
-        # Calculate intervals for saving checkpoints
         if num_checkpoints > 1:
             checkpoint_intervals = [int((i + 1) * num_epochs / num_checkpoints) for i in range(num_checkpoints)]
         else:
             checkpoint_intervals = [num_epochs]
 
         for epoch in range(num_epochs):
-            train_loss = train(
+            train_loss, train_acc = train(
                 train_loader, model, optimizer, criterion, device,
                 save_checkpoints=(epoch + 1 in checkpoint_intervals),
                 checkpoint_path=os.path.join(checkpoints_folder, f"model_{test_dir_name}"),
                 current_epoch=epoch
             )
-            train_acc, _ = evaluate(train_loader, model, device, calculate_accuracy=True)
-            print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}")
-            
-            # Save logs for training progress
+
+            val_loss,val_acc = evaluate(val_loader, model, device, calculate_accuracy=True)
+
+            print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}")
+            logging.info(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}")
+
             train_losses.append(train_loss)
             train_accuracies.append(train_acc)
-            logging.info(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}")
+            val_losses.append(val_loss)
+            val_accuracies.append(val_acc)
 
-            # Save best model
-            if train_acc > best_accuracy:
-                best_accuracy = train_acc
+            
+            if val_acc > best_val_accuracy:
+                best_val_accuracy = val_acc
                 torch.save(model.state_dict(), checkpoint_path)
                 print(f"Best model updated and saved at {checkpoint_path}")
 
-        # Plot training progress in current directory
         plot_training_progress(train_losses, train_accuracies, os.path.join(logs_folder, "plots"))
+        plot_training_progress(val_losses, val_accuracies, os.path.join(logs_folder, "plotsVal"))
 
     # Generate predictions for the test set using the best model
     model.load_state_dict(torch.load(checkpoint_path))
