@@ -105,7 +105,7 @@ class GATConv(MessagePassing):
             heads (int): number of attention heads
             dropout (float): dropout probability
         '''
-        super(CustomGATConv, self).__init__(aggr='add', node_dim=0)
+        super(GATConv, self).__init__(aggr='add', node_dim=0)
         
         self.emb_dim = emb_dim
         self.heads = heads
@@ -201,8 +201,7 @@ class GNN_node(torch.nn.Module):
             elif gnn_type == 'sage':
                 self.convs.append(SAGEConv(emb_dim))  # Only pass emb_dim
             elif gnn_type == 'gat':
-                # Per GAT, l'output dimension sarà emb_dim/heads per ogni head
-                self.convs.append(GATConv(emb_dim, emb_dim//heads, heads=heads))
+                self.convs.append(GATConv(emb_dim, heads=heads, dropout=args.drop_ratio))  # Fixed GAT initialization
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
@@ -286,7 +285,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
             elif gnn_type == 'sage':
                 self.convs.append(SAGEConv(emb_dim))  # Only pass emb_dim
             elif gnn_type == 'gat':
-                self.convs.append(GATConv(emb_dim, emb_dim//heads, heads=heads))
+                self.convs.append(GATConv(emb_dim, heads=heads, dropout=drop_ratio))  # Fixed GAT initialization
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
