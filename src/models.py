@@ -3,16 +3,20 @@ from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import global_add_pool, global_mean_pool, global_max_pool, GlobalAttention, Set2Set
 import torch.nn.functional as F
 from torch_geometric.nn.inits import uniform
+from torch_geometric.nn import GCNConv, GINConv, global_add_pool, SAGEConv, GATConv
+from torch_geometric.nn.models import GIN
 
 from src.conv import GNN_node, GNN_node_Virtualnode
 
 class GNN(torch.nn.Module):
 
     def __init__(self, num_class, num_layer = 5, emb_dim = 300, 
-                    gnn_type = 'gin', virtual_node = True, residual = False, drop_ratio = 0.5, JK = "last", graph_pooling = "mean"):
+                    gnn_type = 'gin', virtual_node = True, residual = False, drop_ratio = 0.5, JK = "max", graph_pooling = "attention",
+                    heads = 4): # Aggiunto parametro heads per GAT
         '''
             num_tasks (int): number of labels to be predicted
             virtual_node (bool): whether to add virtual node or not
+            heads (int): number of attention heads for GAT
         '''
 
         super(GNN, self).__init__()
@@ -30,9 +34,17 @@ class GNN(torch.nn.Module):
 
         ### GNN to generate node embeddings
         if virtual_node:
-            self.gnn_node = GNN_node_Virtualnode(num_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type)
+            if gnn_type in ['gin', 'gcn', 'sage', 'gat']:
+                self.gnn_node = GNN_node_Virtualnode(num_layer, emb_dim, JK=JK, drop_ratio=drop_ratio, 
+                                                   residual=residual, gnn_type=gnn_type, heads=heads)
+            else:
+                raise ValueError(f'Undefined GNN type: {gnn_type}. Choose from: gin, gcn, sage, gat')
         else:
-            self.gnn_node = GNN_node(num_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type)
+            if gnn_type in ['gin', 'gcn', 'sage', 'gat']:
+                self.gnn_node = GNN_node(num_layer, emb_dim, JK=JK, drop_ratio=drop_ratio, 
+                                       residual=residual, gnn_type=gnn_type, heads=heads)
+            else:
+                raise ValueError(f'Undefined GNN type: {gnn_type}. Choose from: gin, gcn, sage, gat')
 
 
         ### Pooling function to generate whole-graph embeddings

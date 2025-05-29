@@ -69,11 +69,12 @@ class GNN_node(torch.nn.Module):
     Output:
         node representations
     """
-    def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "last", residual = False, gnn_type = 'gin'):
+    def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "last", residual = False, 
+                 gnn_type = 'gin', heads = 4):
         '''
             emb_dim (int): node embedding dimensionality
             num_layer (int): number of GNN message passing layers
-
+            heads (int): number of attention heads for GAT
         '''
 
         super(GNN_node, self).__init__()
@@ -97,6 +98,11 @@ class GNN_node(torch.nn.Module):
                 self.convs.append(GINConv(emb_dim))
             elif gnn_type == 'gcn':
                 self.convs.append(GCNConv(emb_dim))
+            elif gnn_type == 'sage':
+                self.convs.append(SAGEConv(emb_dim, emb_dim))
+            elif gnn_type == 'gat':
+                # Per GAT, l'output dimension sarà emb_dim/heads per ogni head
+                self.convs.append(GATConv(emb_dim, emb_dim//heads, heads=heads))
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
@@ -142,7 +148,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
     Output:
         node representations
     """
-    def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "last", residual = False, gnn_type = 'gin'):
+    def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "last", residual = False, 
+                 gnn_type = 'gin', heads = 4):
         '''
             emb_dim (int): node embedding dimensionality
         '''
@@ -176,6 +183,10 @@ class GNN_node_Virtualnode(torch.nn.Module):
                 self.convs.append(GINConv(emb_dim))
             elif gnn_type == 'gcn':
                 self.convs.append(GCNConv(emb_dim))
+            elif gnn_type == 'sage':
+                self.convs.append(SAGEConv(emb_dim, emb_dim))
+            elif gnn_type == 'gat':
+                self.convs.append(GATConv(emb_dim, emb_dim//heads, heads=heads))
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
