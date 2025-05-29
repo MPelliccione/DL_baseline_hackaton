@@ -201,7 +201,7 @@ class GNN_node(torch.nn.Module):
             elif gnn_type == 'gcn':
                 self.convs.append(GCNConv(emb_dim))
             elif gnn_type == 'sage':
-                self.convs.append(SAGEConv(emb_dim, emb_dim))
+                self.convs.append(SAGEConv(emb_dim))
             elif gnn_type == 'gat':
                 # Per GAT, l'output dimension sarà emb_dim/heads per ogni head
                 self.convs.append(GATConv(emb_dim, emb_dim//heads, heads=heads))
