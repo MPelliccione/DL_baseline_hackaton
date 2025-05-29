@@ -1,19 +1,14 @@
 import torch
-from torch_geometric.nn import MessagePassing
-import torch.nn.functional as F
-from torch_geometric.nn import global_mean_pool, global_add_pool
-from torch_geometric.utils import degree
 from torch_geometric.nn import (
-    global_add_pool, 
-    global_mean_pool, 
-    global_max_pool, 
-    GlobalAttention, 
-    Set2Set,
+    MessagePassing,
     SAGEConv,
     GATConv,
-    GCNConv, 
-    GINConv
+    global_mean_pool, 
+    global_add_pool
 )
+import torch.nn.functional as F
+from torch_geometric.utils import degree
+
 import math
 
 ### GIN convolution along the graph structure
