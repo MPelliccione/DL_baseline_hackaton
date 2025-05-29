@@ -1,9 +1,18 @@
 import torch
 from torch_geometric.nn import MessagePassing
-from torch_geometric.nn import global_add_pool, global_mean_pool, global_max_pool, GlobalAttention, Set2Set
+from torch_geometric.nn import (
+    global_add_pool, 
+    global_mean_pool, 
+    global_max_pool, 
+    GlobalAttention, 
+    Set2Set,
+    SAGEConv,
+    GATConv,
+    GCNConv, 
+    GINConv
+)
 import torch.nn.functional as F
 from torch_geometric.nn.inits import uniform
-from torch_geometric.nn import GCNConv, GINConv, global_add_pool, SAGEConv, GATConv
 from torch_geometric.nn.models import GIN
 
 from src.conv import GNN_node, GNN_node_Virtualnode
