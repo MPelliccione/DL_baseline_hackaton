@@ -68,6 +68,103 @@ class GCNConv(MessagePassing):
         return aggr_out
 
 
+### GraphSAGE convolution along the graph structure
+class SAGEConv(MessagePassing):
+    def __init__(self, emb_dim):
+        '''
+            emb_dim (int): node embedding dimensionality
+        '''
+        super(CustomSAGEConv, self).__init__(aggr='mean')  # Use mean aggregation
+
+        self.linear_self = torch.nn.Linear(emb_dim, emb_dim)
+        self.linear_msg = torch.nn.Linear(emb_dim, emb_dim)
+        self.edge_encoder = torch.nn.Linear(7, emb_dim)
+
+    def forward(self, x, edge_index, edge_attr):
+        # Transform edge attributes
+        edge_embedding = self.edge_encoder(edge_attr)
+        
+        # Compute messages and aggregate
+        out = self.propagate(edge_index, x=x, edge_attr=edge_embedding)
+        
+        # Transform self features and combine
+        out = self.linear_msg(out) + self.linear_self(x)
+        
+        return out
+
+    def message(self, x_j, edge_attr):
+        # Combine neighbor features with edge features
+        return F.relu(x_j + edge_attr)
+
+    def update(self, aggr_out):
+        return aggr_out
+
+### GAT convolution along the graph structure
+class GATConv(MessagePassing):
+    def __init__(self, emb_dim, heads=4, dropout=0.5):
+        '''
+            emb_dim (int): node embedding dimensionality
+            heads (int): number of attention heads
+            dropout (float): dropout probability
+        '''
+        super(CustomGATConv, self).__init__(aggr='add', node_dim=0)
+        
+        self.emb_dim = emb_dim
+        self.heads = heads
+        self.dropout = dropout
+        self.head_dim = emb_dim // heads
+        assert self.head_dim * heads == emb_dim, 'emb_dim must be divisible by heads'
+
+        # Linear transformations for attention
+        self.att_l = torch.nn.Linear(emb_dim, heads * self.head_dim, bias=False)
+        self.att_r = torch.nn.Linear(emb_dim, heads * self.head_dim, bias=False)
+        
+        # Attention weight vector
+        self.att_weight = torch.nn.Parameter(torch.Tensor(1, heads, self.head_dim))
+        
+        # Edge encoder
+        self.edge_encoder = torch.nn.Linear(7, emb_dim)
+        
+        # Output transformation
+        self.linear_out = torch.nn.Linear(emb_dim, emb_dim)
+        
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        torch.nn.init.xavier_uniform_(self.att_l.weight)
+        torch.nn.init.xavier_uniform_(self.att_r.weight)
+        torch.nn.init.xavier_uniform_(self.att_weight)
+        
+    def forward(self, x, edge_index, edge_attr):
+        edge_embedding = self.edge_encoder(edge_attr)
+        
+        x_l = self.att_l(x).view(-1, self.heads, self.head_dim)
+        x_r = self.att_r(x).view(-1, self.heads, self.head_dim)
+        
+        out = self.propagate(edge_index, 
+                           x=(x_l, x_r),
+                           edge_attr=edge_embedding.view(-1, self.heads, self.head_dim))
+        
+        out = out.view(-1, self.emb_dim)
+        out = self.linear_out(out)
+        
+        return out
+
+    def message(self, edge_index_i, x_i, x_j, edge_attr):
+        # Compute attention coefficients
+        alpha = (x_i * self.att_weight).sum(dim=-1) + \
+               (x_j * self.att_weight).sum(dim=-1)
+        alpha = F.leaky_relu(alpha, negative_slope=0.2)
+        alpha = softmax(alpha, edge_index_i)
+        
+        # Apply dropout to attention coefficients
+        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+        
+        # Add edge features to the message
+        return alpha.unsqueeze(-1) * (x_j + edge_attr)
+
+    def update(self, aggr_out):
+        return aggr_out
 ### GNN to generate node embedding
 class GNN_node(torch.nn.Module):
     """
@@ -249,3 +346,4 @@ class GNN_node_Virtualnode(torch.nn.Module):
                 node_representation += h_list[layer]
 
         return node_representation
+
