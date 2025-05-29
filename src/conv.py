@@ -98,6 +98,68 @@ class GraphSAGEConv(MessagePassing):
 
     def update(self, aggr_out):
         return aggr_out
+
+class GATConv(MessagePassing):
+    def __init__(self, emb_dim, heads=4, dropout=0.5, negative_slope=0.2):
+        """
+        GAT convolution layer
+        Args:
+            emb_dim (int): dimensionality of embeddings
+            heads (int): number of attention heads
+            dropout (float): dropout probability
+            negative_slope (float): LeakyReLU angle of negative slope
+        """
+        super(GATConv, self).__init__(aggr='add', node_dim=0)  # "Add" aggregation with multi-head attention
+
+        self.emb_dim = emb_dim
+        self.heads = heads
+        self.dropout = dropout
+        self.negative_slope = negative_slope
+        self.head_dim = emb_dim // heads
+        assert self.head_dim * heads == emb_dim, "Embedding dimension must be divisible by number of heads"
+
+        # Linear transformations for node features
+        self.linear = torch.nn.Linear(emb_dim, heads * self.head_dim, bias=False)
+        # Attention mechanisms
+        self.att = torch.nn.Parameter(torch.Tensor(1, heads, 2 * self.head_dim))
+        # Edge feature transformation
+        self.edge_encoder = torch.nn.Linear(7, emb_dim)
+        
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        """Initialize learnable parameters."""
+        gain = torch.nn.init.calculate_gain('relu')
+        torch.nn.init.xavier_normal_(self.linear.weight, gain=gain)
+        torch.nn.init.xavier_normal_(self.att, gain=gain)
+
+    def forward(self, x, edge_index, edge_attr):
+        edge_embedding = self.edge_encoder(edge_attr)
+        
+        x = self.linear(x).view(-1, self.heads, self.head_dim)
+        
+        # Propagate messages
+        out = self.propagate(edge_index, x=x, edge_attr=edge_embedding)
+        
+        # Concatenate heads
+        out = out.view(-1, self.emb_dim)
+        
+        return out
+
+    def message(self, edge_index_i, x_i, x_j, edge_attr):
+        # Compute attention coefficients
+        alpha = torch.cat([x_i, x_j], dim=-1).view(-1, self.heads, 2 * self.head_dim)
+        alpha = F.leaky_relu((alpha * self.att).sum(dim=-1), self.negative_slope)
+        alpha = F.softmax(alpha, dim=0)
+        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+        
+        # Add edge features to the message
+        edge_attr = edge_attr.unsqueeze(1).repeat(1, self.heads, 1)
+        return (x_j * alpha.unsqueeze(-1) + edge_attr) / 2
+
+    def update(self, aggr_out):
+        return aggr_out
+
 ### GNN to generate node embedding
 class GNN_node(torch.nn.Module):
     """
@@ -134,6 +196,8 @@ class GNN_node(torch.nn.Module):
                 self.convs.append(GCNConv(emb_dim))
             elif gnn_type == 'graphsage':
                 self.convs.append(GraphSAGEConv(emb_dim))
+            elif gnn_type == 'gat':
+                self.convs.append(GATConv(emb_dim))
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
@@ -215,6 +279,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
                 self.convs.append(GCNConv(emb_dim))
             elif gnn_type == 'graphsage':
                 self.convs.append(GraphSAGEConv(emb_dim))
+            elif gnn_type == 'gat':
+                self.convs.append(GATConv(emb_dim))
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
