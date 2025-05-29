@@ -34,10 +34,10 @@ class GNN(torch.nn.Module):
         self.num_class = num_class
         self.graph_pooling = graph_pooling
         self.virtual_node = virtual_node
-
+        self.node_encoder = torch.nn.Embedding(1, emb_dim)  # uniform input node embedding
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
-        self.node_encoder = torch.nn.Embedding(1, emb_dim)  # uniform input node embedding
+        
         ### GNN to generate node embeddings
         if virtual_node:
             if gnn_type in ['gin', 'gcn', 'sage', 'gat']:
