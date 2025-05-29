@@ -85,6 +85,15 @@ class GNN(torch.nn.Module):
     def forward(self, batched_data, return_embeddings=False):
         x, edge_index, batch = batched_data.x, batched_data.edge_index, batched_data.batch
         
+        if x is None:
+            x = torch.zeros(batched_data.num_nodes, dtype=torch.long, device=edge_index.device)
+
+
+    # Initialize node_representation before any loop that might use it
+    # Assuming 'emb_dim' is the size of your node embeddings
+        node_representation = torch.zeros(batched_data.num_nodes, self.emb_dim, device=x.device)
+
+
         # Encode nodes and collect layer representations
         h = self.node_encoder(x)
         h_list = [h]
