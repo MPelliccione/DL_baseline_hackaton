@@ -1,8 +1,6 @@
 import torch
 from torch_geometric.nn import (
     MessagePassing,
-    SAGEConv,
-    GATConv,
     global_mean_pool, 
     global_add_pool
 )

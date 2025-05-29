@@ -5,11 +5,7 @@ from torch_geometric.nn import (
     global_mean_pool, 
     global_max_pool, 
     GlobalAttention, 
-    Set2Set,
-    SAGEConv,
-    GATConv,
-    GCNConv, 
-    GINConv
+    Set2Set
 )
 import torch.nn.functional as F
 from torch_geometric.nn.inits import uniform
