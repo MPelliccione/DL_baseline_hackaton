@@ -16,7 +16,8 @@ from src.conv import GNN_node, GNN_node_Virtualnode
 class GNN(torch.nn.Module):
 
     def __init__(self, num_class, num_layer = 5, emb_dim = 300, 
-                    gnn_type = 'gin', virtual_node = True, residual = False, drop_ratio = 0.5, JK = "max", graph_pooling = "attention",
+                    gnn_type = 'gin', virtual_node = True, residual = False, drop_ratio = 0.5, 
+                    JK = "attention", graph_pooling = "attention",
                     heads = 4): # Aggiunto parametro heads per GAT
         '''
             num_tasks (int): number of labels to be predicted
@@ -36,7 +37,7 @@ class GNN(torch.nn.Module):
 
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
-
+        self.node_encoder = torch.nn.Embedding(1, emb_dim)  # uniform input node embedding
         ### GNN to generate node embeddings
         if virtual_node:
             if gnn_type in ['gin', 'gcn', 'sage', 'gat']:
@@ -71,54 +72,50 @@ class GNN(torch.nn.Module):
         else:
             self.graph_pred_linear = torch.nn.Linear(self.emb_dim, self.num_class)
 
+        # Add JK attention layer if needed
+        self.JK = JK
+        if self.JK == "attention":
+            self.jk_attention = torch.nn.Sequential(
+                torch.nn.Linear(emb_dim, emb_dim),
+                torch.nn.BatchNorm1d(emb_dim),
+                torch.nn.ReLU(),
+                torch.nn.Linear(emb_dim, 1)
+            )
+
     def forward(self, batched_data, return_embeddings=False):
         x, edge_index, batch = batched_data.x, batched_data.edge_index, batched_data.batch
         
-        if self.virtual_node:
-            # Virtual node embeddings
-            virtualnode_embedding = self.virtualnode_embedding(
-                torch.zeros(batch[-1].item() + 1).to(edge_index.dtype).to(edge_index.device))
-
-        h_list = [self.node_encoder(x)]
+        # Encode nodes and collect layer representations
+        h = self.node_encoder(x)
+        h_list = [h]
         
+        # Get node embeddings for each layer
         for layer in range(self.num_layer):
-            if self.virtual_node:
-                # Add virtual node to graph
-                h_list[layer] = h_list[layer] + virtualnode_embedding[batch]
-                
-            h = self.convs[layer](h_list[layer], edge_index)
-            h = self.batch_norms[layer](h)
-            
-            if layer == self.num_layer - 1:
-                h = F.dropout(h, self.drop_ratio, training=self.training)
-            else:
-                h = F.dropout(F.relu(h), self.drop_ratio, training=self.training)
-                
-            if self.virtual_node:
-                # Update virtual nodes
-                virtualnode_embedding_temp = global_add_pool(h_list[layer], batch) + virtualnode_embedding
-                virtualnode_embedding = F.dropout(
-                    self.mlp_virtualnode_list[layer](virtualnode_embedding_temp),
-                    self.drop_ratio, training=self.training)
-                
+            h = self.gnn_node(batched_data)
             h_list.append(h)
-
-        # Different implementations of Jk-concat
-        if self.JK == "concat":
-            node_representation = torch.cat(h_list, dim = 1)
-        elif self.JK == "last":
+            
+        # Apply JK connection
+        if self.JK == "attention":
+            # Stack all layer representations [num_layers, num_nodes, emb_dim]
+            stack_h = torch.stack(h_list, dim=0)
+            
+            # Calculate attention scores
+            att_scores = self.jk_attention(stack_h.view(-1, self.emb_dim))
+            att_scores = att_scores.view(len(h_list), -1, 1)
+            att_scores = F.softmax(att_scores, dim=0)
+            
+            # Weighted combination of layer representations
+            node_representation = (stack_h * att_scores).sum(dim=0)
+        else:
+            # ...existing JK options (last, max, sum, concat)...
             node_representation = h_list[-1]
-        elif self.JK == "max":
-            h_list = [h.unsqueeze_(0) for h in h_list]
-            node_representation = torch.max(torch.cat(h_list, dim = 0), dim = 0)[0]
-        elif self.JK == "sum":
-            h_list = [h.unsqueeze_(0) for h in h_list]
-            node_representation = torch.sum(torch.cat(h_list, dim = 0), dim = 0)[0]
-
+        
         # Graph-level readout
         graph_representation = self.pool(node_representation, batch)
+        
+        # Predict
         output = self.graph_pred_linear(graph_representation)
-
+        
         if return_embeddings:
             return output, graph_representation
         return output
