@@ -109,7 +109,7 @@ class GATConv(MessagePassing):
             dropout (float): dropout probability
             negative_slope (float): LeakyReLU angle of negative slope
         """
-        super(GATConv, self).__init__(aggr='add', node_dim=0)  # "Add" aggregation with multi-head attention
+        super(GATConv, self).__init__(aggr='add', node_dim=0)
 
         self.emb_dim = emb_dim
         self.heads = heads
@@ -118,12 +118,10 @@ class GATConv(MessagePassing):
         self.head_dim = emb_dim // heads
         assert self.head_dim * heads == emb_dim, "Embedding dimension must be divisible by number of heads"
 
-        # Linear transformations for node features
         self.linear = torch.nn.Linear(emb_dim, heads * self.head_dim, bias=False)
-        # Attention mechanisms
         self.att = torch.nn.Parameter(torch.Tensor(1, heads, 2 * self.head_dim))
-        # Edge feature transformation
-        self.edge_encoder = torch.nn.Linear(7, emb_dim)
+        # Transform edge features to match head dimensions
+        self.edge_encoder = torch.nn.Linear(7, heads * self.head_dim)
         
         self.reset_parameters()
 
@@ -134,14 +132,13 @@ class GATConv(MessagePassing):
         torch.nn.init.xavier_normal_(self.att, gain=gain)
 
     def forward(self, x, edge_index, edge_attr):
-        edge_embedding = self.edge_encoder(edge_attr)
+        # Transform edge features to match head dimensions
+        edge_embedding = self.edge_encoder(edge_attr).view(-1, self.heads, self.head_dim)
         
         x = self.linear(x).view(-1, self.heads, self.head_dim)
         
-        # Propagate messages
         out = self.propagate(edge_index, x=x, edge_attr=edge_embedding)
         
-        # Concatenate heads
         out = out.view(-1, self.emb_dim)
         
         return out
@@ -153,8 +150,7 @@ class GATConv(MessagePassing):
         alpha = F.softmax(alpha, dim=0)
         alpha = F.dropout(alpha, p=self.dropout, training=self.training)
         
-        # Add edge features to the message
-        edge_attr = edge_attr.unsqueeze(1).repeat(1, self.heads, 1)
+        # Edge features are already in the correct shape (num_edges, heads, head_dim)
         return (x_j * alpha.unsqueeze(-1) + edge_attr) / 2
 
     def update(self, aggr_out):
