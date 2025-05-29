@@ -3,7 +3,17 @@ from torch_geometric.nn import MessagePassing
 import torch.nn.functional as F
 from torch_geometric.nn import global_mean_pool, global_add_pool
 from torch_geometric.utils import degree
-
+from torch_geometric.nn import (
+    global_add_pool, 
+    global_mean_pool, 
+    global_max_pool, 
+    GlobalAttention, 
+    Set2Set,
+    SAGEConv,
+    GATConv,
+    GCNConv, 
+    GINConv
+)
 import math
 
 ### GIN convolution along the graph structure
