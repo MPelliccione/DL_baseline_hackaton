@@ -62,7 +62,42 @@ class GCNConv(MessagePassing):
     def update(self, aggr_out):
         return aggr_out
 
+class GraphSAGEConv(MessagePassing):
+    def __init__(self, emb_dim):
+        """
+        GraphSAGE convolution layer
+        Args:
+            emb_dim (int): dimensionality of embeddings
+        """
+        super(GraphSAGEConv, self).__init__(aggr='mean')  # Using mean aggregation
 
+        self.linear_neigh = torch.nn.Linear(emb_dim, emb_dim)
+        self.linear_self = torch.nn.Linear(emb_dim, emb_dim)
+        self.edge_encoder = torch.nn.Linear(7, emb_dim)
+
+    def forward(self, x, edge_index, edge_attr):
+        # Edge features transformation
+        edge_embedding = self.edge_encoder(edge_attr)
+        
+        # Compute message passing
+        neigh_msg = self.propagate(edge_index, x=x, edge_attr=edge_embedding)
+        
+        # Transform both self features and aggregated neighbor features
+        out_neigh = self.linear_neigh(neigh_msg)
+        out_self = self.linear_self(x)
+        
+        # Combine and normalize
+        out = out_neigh + out_self
+        out = F.normalize(out, p=2, dim=-1)
+        
+        return out
+
+    def message(self, x_j, edge_attr):
+        # Combine node features with edge features
+        return F.relu(x_j + edge_attr)
+
+    def update(self, aggr_out):
+        return aggr_out
 ### GNN to generate node embedding
 class GNN_node(torch.nn.Module):
     """
@@ -97,6 +132,8 @@ class GNN_node(torch.nn.Module):
                 self.convs.append(GINConv(emb_dim))
             elif gnn_type == 'gcn':
                 self.convs.append(GCNConv(emb_dim))
+            elif gnn_type == 'graphsage':
+                self.convs.append(GraphSAGEConv(emb_dim))
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
@@ -176,6 +213,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
                 self.convs.append(GINConv(emb_dim))
             elif gnn_type == 'gcn':
                 self.convs.append(GCNConv(emb_dim))
+            elif gnn_type == 'graphsage':
+                self.convs.append(GraphSAGEConv(emb_dim))
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
