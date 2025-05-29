@@ -72,7 +72,7 @@ class SAGEConv(MessagePassing):
         '''
             emb_dim (int): node embedding dimensionality
         '''
-        super(CustomSAGEConv, self).__init__(aggr='mean')  # Use mean aggregation
+        super(SAGEConv, self).__init__(aggr='mean')  # Use mean aggregation
 
         self.linear_self = torch.nn.Linear(emb_dim, emb_dim)
         self.linear_msg = torch.nn.Linear(emb_dim, emb_dim)
@@ -199,7 +199,7 @@ class GNN_node(torch.nn.Module):
             elif gnn_type == 'gcn':
                 self.convs.append(GCNConv(emb_dim))
             elif gnn_type == 'sage':
-                self.convs.append(SAGEConv(emb_dim))
+                self.convs.append(SAGEConv(emb_dim))  # Only pass emb_dim
             elif gnn_type == 'gat':
                 # Per GAT, l'output dimension sarà emb_dim/heads per ogni head
                 self.convs.append(GATConv(emb_dim, emb_dim//heads, heads=heads))
@@ -284,7 +284,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
             elif gnn_type == 'gcn':
                 self.convs.append(GCNConv(emb_dim))
             elif gnn_type == 'sage':
-                self.convs.append(SAGEConv(emb_dim, emb_dim))
+                self.convs.append(SAGEConv(emb_dim))  # Only pass emb_dim
             elif gnn_type == 'gat':
                 self.convs.append(GATConv(emb_dim, emb_dim//heads, heads=heads))
             else:
