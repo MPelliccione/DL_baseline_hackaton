@@ -6,7 +6,6 @@ from torch_geometric.utils import degree
 
 import math
 
-from src.utils import DropPath
 ### GIN convolution along the graph structure
 class GINConv(MessagePassing):
     def __init__(self, emb_dim):
@@ -110,7 +109,7 @@ class GATConv(MessagePassing):
             dropout (float): dropout probability
             negative_slope (float): LeakyReLU angle of negative slope
         """
-        super(GATConv, self).__init__(aggr='add', node_dim=0)
+        super(GATConv, self).__init__(aggr='add', node_dim=0)  # "Add" aggregation with multi-head attention
 
         self.emb_dim = emb_dim
         self.heads = heads
@@ -119,10 +118,12 @@ class GATConv(MessagePassing):
         self.head_dim = emb_dim // heads
         assert self.head_dim * heads == emb_dim, "Embedding dimension must be divisible by number of heads"
 
+        # Linear transformations for node features
         self.linear = torch.nn.Linear(emb_dim, heads * self.head_dim, bias=False)
+        # Attention mechanisms
         self.att = torch.nn.Parameter(torch.Tensor(1, heads, 2 * self.head_dim))
-        # Transform edge features to match head dimensions
-        self.edge_encoder = torch.nn.Linear(7, heads * self.head_dim)
+        # Edge feature transformation
+        self.edge_encoder = torch.nn.Linear(7, emb_dim)
         
         self.reset_parameters()
 
@@ -133,13 +134,14 @@ class GATConv(MessagePassing):
         torch.nn.init.xavier_normal_(self.att, gain=gain)
 
     def forward(self, x, edge_index, edge_attr):
-        # Transform edge features to match head dimensions
-        edge_embedding = self.edge_encoder(edge_attr).view(-1, self.heads, self.head_dim)
+        edge_embedding = self.edge_encoder(edge_attr)
         
         x = self.linear(x).view(-1, self.heads, self.head_dim)
         
+        # Propagate messages
         out = self.propagate(edge_index, x=x, edge_attr=edge_embedding)
         
+        # Concatenate heads
         out = out.view(-1, self.emb_dim)
         
         return out
@@ -151,7 +153,8 @@ class GATConv(MessagePassing):
         alpha = F.softmax(alpha, dim=0)
         alpha = F.dropout(alpha, p=self.dropout, training=self.training)
         
-        # Edge features are already in the correct shape (num_edges, heads, head_dim)
+        # Add edge features to the message
+        edge_attr = edge_attr.unsqueeze(1).repeat(1, self.heads, 1)
         return (x_j * alpha.unsqueeze(-1) + edge_attr) / 2
 
     def update(self, aggr_out):
@@ -251,10 +254,6 @@ class GNN_node_Virtualnode(torch.nn.Module):
         self.JK = JK
         ### add residual connection or not
         self.residual = residual
-        # Alla fine di __init__
-        self.droppaths = torch.nn.ModuleList([
-            DropPath(drop_prob=0.1) for _ in range(self.num_layer)
-        ])
 
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
@@ -289,7 +288,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
 
         for layer in range(num_layer - 1):
             self.mlp_virtualnode_list.append(torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.LayerNorm(2*emb_dim), torch.nn.ReLU(), \
-                                                    torch.nn.Linear(2*emb_dim, emb_dim), torch.nn.LayerNorm(emb_dim), torch.nn.ReLU()))
+                                                    torch.nn.Linear(2*emb_dim, emb_dim), torch.nn.BatchNorm1d(emb_dim), torch.nn.ReLU()))
 
 
     def forward(self, batched_data):
@@ -315,8 +314,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
                 h = F.dropout(F.relu(h), self.drop_ratio, training = self.training)
 
             if self.residual:
-                h = self.droppaths[layer](h + h_list[layer])
-
+                h = h + h_list[layer]
 
             h_list.append(h)
 
@@ -325,15 +323,11 @@ class GNN_node_Virtualnode(torch.nn.Module):
                 ### add message from graph nodes to virtual nodes
                 virtualnode_embedding_temp = global_add_pool(h_list[layer], batch) + virtualnode_embedding
                 ### transform virtual nodes using MLP
-                virtualnode_update = self.mlp_virtualnode_list[layer](virtualnode_embedding_temp)
-                virtualnode_update = self.droppaths[layer](virtualnode_update)  # usa lo stesso droppath
 
                 if self.residual:
-                    virtualnode_embedding = virtualnode_embedding + F.dropout(virtualnode_update, self.drop_ratio, training=self.training)
+                    virtualnode_embedding = virtualnode_embedding + F.dropout(self.mlp_virtualnode_list[layer](virtualnode_embedding_temp), self.drop_ratio, training = self.training)
                 else:
-                    virtualnode_embedding = F.dropout(virtualnode_update, self.drop_ratio, training=self.training)
-
-                
+                    virtualnode_embedding = F.dropout(self.mlp_virtualnode_list[layer](virtualnode_embedding_temp), self.drop_ratio, training = self.training)
 
         ### Different implementations of Jk-concat
         if self.JK == "last":

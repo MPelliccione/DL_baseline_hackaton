@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 import random
 import numpy as np
 import tarfile
@@ -16,20 +15,6 @@ def set_seed(seed=777):
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
 
-
-class DropPath(nn.Module):
-    def __init__(self, drop_prob=0.0):
-        super(DropPath, self).__init__()
-        self.drop_prob = drop_prob
-
-    def forward(self, x):
-        if self.drop_prob == 0. or not self.training:
-            return x
-        keep_prob = 1 - self.drop_prob
-        shape = (x.size(0),) + (1,) * (x.dim() - 1)  # [B, 1, ..., 1]
-        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
-        binary_mask = torch.floor(random_tensor)
-        return x / keep_prob * binary_mask
 
 def gzip_folder(folder_path, output_file):
     """
