@@ -6,6 +6,7 @@ from torch_geometric.utils import degree
 
 import math
 
+from src.utils import DropPath
 ### GIN convolution along the graph structure
 class GINConv(MessagePassing):
     def __init__(self, emb_dim):
@@ -15,7 +16,7 @@ class GINConv(MessagePassing):
 
         super(GINConv, self).__init__(aggr = "add")
 
-        self.mlp = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.BatchNorm1d(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, emb_dim))
+        self.mlp = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.LayerNorm(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, emb_dim))
         self.eps = torch.nn.Parameter(torch.Tensor([0]))
 
         self.edge_encoder = torch.nn.Linear(7, emb_dim)
@@ -201,7 +202,7 @@ class GNN_node(torch.nn.Module):
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
-            self.batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
+            self.batch_norms.append(torch.nn.LayerNorm(2*emb_dim))
 
     def forward(self, batched_data):
         x, edge_index, edge_attr, batch = batched_data.x, batched_data.edge_index, batched_data.edge_attr, batched_data.batch
@@ -254,6 +255,10 @@ class GNN_node_Virtualnode(torch.nn.Module):
         self.JK = JK
         ### add residual connection or not
         self.residual = residual
+        # Alla fine di __init__
+        self.droppaths = torch.nn.ModuleList([
+            DropPath(drop_prob=0.1) for _ in range(self.num_layer)
+        ])
 
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
@@ -287,8 +292,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
             self.batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
 
         for layer in range(num_layer - 1):
-            self.mlp_virtualnode_list.append(torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.BatchNorm1d(2*emb_dim), torch.nn.ReLU(), \
-                                                    torch.nn.Linear(2*emb_dim, emb_dim), torch.nn.BatchNorm1d(emb_dim), torch.nn.ReLU()))
+            self.mlp_virtualnode_list.append(torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.LayerNorm(2*emb_dim), torch.nn.ReLU(), \
+                                                    torch.nn.Linear(2*emb_dim, emb_dim), torch.nn.LayerNorm(emb_dim), torch.nn.ReLU()))
 
 
     def forward(self, batched_data):
@@ -314,7 +319,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
                 h = F.dropout(F.relu(h), self.drop_ratio, training = self.training)
 
             if self.residual:
-                h = h + h_list[layer]
+                h = self.droppaths[layer](h + h_list[layer])
+
 
             h_list.append(h)
 
@@ -323,11 +329,15 @@ class GNN_node_Virtualnode(torch.nn.Module):
                 ### add message from graph nodes to virtual nodes
                 virtualnode_embedding_temp = global_add_pool(h_list[layer], batch) + virtualnode_embedding
                 ### transform virtual nodes using MLP
+                virtualnode_update = self.mlp_virtualnode_list[layer](virtualnode_embedding_temp)
+                virtualnode_update = self.droppaths[layer](virtualnode_update)  # usa lo stesso droppath
 
                 if self.residual:
-                    virtualnode_embedding = virtualnode_embedding + F.dropout(self.mlp_virtualnode_list[layer](virtualnode_embedding_temp), self.drop_ratio, training = self.training)
+                    virtualnode_embedding = virtualnode_embedding + F.dropout(virtualnode_update, self.drop_ratio, training=self.training)
                 else:
-                    virtualnode_embedding = F.dropout(self.mlp_virtualnode_list[layer](virtualnode_embedding_temp), self.drop_ratio, training = self.training)
+                    virtualnode_embedding = F.dropout(virtualnode_update, self.drop_ratio, training=self.training)
+
+                
 
         ### Different implementations of Jk-concat
         if self.JK == "last":
