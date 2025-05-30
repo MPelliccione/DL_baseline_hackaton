@@ -284,11 +284,11 @@ class GNN_node_Virtualnode(torch.nn.Module):
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
-            self.batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
+            self.batch_norms.append(torch.nn.LayerNorm(emb_dim))
 
         for layer in range(num_layer - 1):
             self.mlp_virtualnode_list.append(torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.LayerNorm(2*emb_dim), torch.nn.ReLU(), \
-                                                    torch.nn.Linear(2*emb_dim, emb_dim), torch.nn.BatchNorm1d(emb_dim), torch.nn.ReLU()))
+                                                    torch.nn.Linear(2*emb_dim, emb_dim), torch.nn.LayerNorm(emb_dim), torch.nn.ReLU()))
 
 
     def forward(self, batched_data):
