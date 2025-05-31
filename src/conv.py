@@ -246,7 +246,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
     Output:
         node representations
     """
-    def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "last", residual = False, gnn_type = 'gin'):
+    def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "max", residual = False, gnn_type = 'gin'):
         '''
             emb_dim (int): node embedding dimensionality
         '''
@@ -340,5 +340,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
             node_representation = 0
             for layer in range(self.num_layer + 1):
                 node_representation += h_list[layer]
+        elif self.JK == "max":
+            node_representation = torch.stack(h_list, dim=0)
+            node_representation = torch.max(node_representation, dim=0)[0]
 
         return node_representation
