@@ -201,7 +201,7 @@ class GNN_node(torch.nn.Module):
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
-            self.batch_norms.append(GraphNorm(2*emb_dim))
+            self.batch_norms.append(GraphNorm(emb_dim))
 
     def forward(self, batched_data):
         x, edge_index, edge_attr, batch = batched_data.x, batched_data.edge_index, batched_data.edge_attr, batched_data.batch
@@ -284,6 +284,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
+            # Fix: Use correct dimension for normalization
             self.batch_norms.append(GraphNorm(emb_dim))
 
         for layer in range(num_layer - 1):
