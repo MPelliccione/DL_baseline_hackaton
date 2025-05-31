@@ -1,6 +1,6 @@
 import torch
 from torch_geometric.nn import MessagePassing
-from torch_geometric.nn import global_add_pool, global_mean_pool, global_max_pool, GlobalAttention, Set2Set
+from torch_geometric.nn import global_add_pool, global_mean_pool, global_max_pool, GlobalAttention, Set2Set, GraphNorm
 import torch.nn.functional as F
 from torch_geometric.nn.inits import uniform
 
@@ -9,7 +9,7 @@ from src.conv import GNN_node, GNN_node_Virtualnode
 class GNN(torch.nn.Module):
 
     def __init__(self, num_class, num_layer = 5, emb_dim = 300, 
-                    gnn_type = 'gin', virtual_node = True, residual = False, drop_ratio = 0.5, JK = "last", graph_pooling = "mean"):
+                    gnn_type = 'gin', virtual_node = True, residual = False, drop_ratio = 0.5, JK = "max", graph_pooling = "attention"):
         '''
             num_tasks (int): number of labels to be predicted
             virtual_node (bool): whether to add virtual node or not
@@ -42,7 +42,7 @@ class GNN(torch.nn.Module):
         elif self.graph_pooling == "max":
             self.pool = global_max_pool
         elif self.graph_pooling == "attention":
-            self.pool = GlobalAttention(gate_nn = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.LayerNorm(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, 1)))
+            self.pool = GlobalAttention(gate_nn = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), GraphNorm(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, 1)))
         elif self.graph_pooling == "set2set":
             self.pool = Set2Set(emb_dim, processing_steps = 2)
         else:

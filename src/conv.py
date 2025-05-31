@@ -1,7 +1,7 @@
 import torch
 from torch_geometric.nn import MessagePassing
 import torch.nn.functional as F
-from torch_geometric.nn import global_mean_pool, global_add_pool
+from torch_geometric.nn import global_mean_pool, global_add_pool, GraphNorm
 from torch_geometric.utils import degree
 
 import math
@@ -15,7 +15,7 @@ class GINConv(MessagePassing):
 
         super(GINConv, self).__init__(aggr = "add")
 
-        self.mlp = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.LayerNorm(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, emb_dim))
+        self.mlp = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), GraphNorm(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, emb_dim))
         self.eps = torch.nn.Parameter(torch.Tensor([0]))
 
         self.edge_encoder = torch.nn.Linear(7, emb_dim)
@@ -201,7 +201,7 @@ class GNN_node(torch.nn.Module):
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
-            self.batch_norms.append(torch.nn.LayerNorm(2*emb_dim))
+            self.batch_norms.append(GraphNorm(2*emb_dim))
 
     def forward(self, batched_data):
         x, edge_index, edge_attr, batch = batched_data.x, batched_data.edge_index, batched_data.edge_attr, batched_data.batch
@@ -284,11 +284,11 @@ class GNN_node_Virtualnode(torch.nn.Module):
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
-            self.batch_norms.append(torch.nn.LayerNorm(emb_dim))
+            self.batch_norms.append(GraphNorm(emb_dim))
 
         for layer in range(num_layer - 1):
-            self.mlp_virtualnode_list.append(torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.LayerNorm(2*emb_dim), torch.nn.ReLU(), \
-                                                    torch.nn.Linear(2*emb_dim, emb_dim), torch.nn.LayerNorm(emb_dim), torch.nn.ReLU()))
+            self.mlp_virtualnode_list.append(torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), GraphNorm(2*emb_dim), torch.nn.ReLU(), \
+                                                    torch.nn.Linear(2*emb_dim, emb_dim), GraphNorm(emb_dim), torch.nn.ReLU()))
 
 
     def forward(self, batched_data):
